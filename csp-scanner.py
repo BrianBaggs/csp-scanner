@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Content Security Policy (CSP) Scanner — fetch, parse, and audit CSP headers."""
+# pylint: disable=invalid-name,too-many-lines
 # =============================================================================
 #  Content Security Policy (CSP) Scanner v2.0
 #  Fetches and analyzes the Content-Security-Policy header of a target URL,
@@ -21,9 +23,12 @@
 #                X-Frame-Options note
 #
 #  References:
-#    - MDN CSP Guide        https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CSP
-#    - MDN CSP Header       https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy
-#    - OWASP CSP Cheat Sheet https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html
+#    - MDN CSP Guide
+#      https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CSP
+#    - MDN CSP Header
+#      https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy
+#    - OWASP CSP Cheat Sheet
+#      https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html
 #    - content-security-policy.com https://content-security-policy.com/
 #    - Google CSP Evaluator  https://csp-evaluator.withgoogle.com/
 #    - CSP Is Dead, Long Live CSP! (Weichselbaum et al., 2016)
@@ -54,8 +59,11 @@ from urllib.request import Request, urlopen
 VERSION = "2.0.0"
 TIMEOUT = 15
 
+
 # ── Colors ────────────────────────────────────────────────────────────────────
-class Colors:
+class Colors:  # pylint: disable=too-few-public-methods
+    """ANSI color codes; attributes are empty strings when stdout is not a TTY."""
+
     _tty = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
     R    = "\033[0;31m"  if _tty else ""   # red
     G    = "\033[0;32m"  if _tty else ""   # green
@@ -68,6 +76,7 @@ class Colors:
     NC   = "\033[0m"     if _tty else ""   # reset
     BOLD = "\033[1m"     if _tty else ""
     DIM  = "\033[2m"     if _tty else ""
+
 
 CO = Colors
 
@@ -93,9 +102,9 @@ CDN_BYPASS_DOMAINS = {
     "maps.googleapis.com":           "JSONP endpoint bypass",
     "storage.googleapis.com":        "User-uploaded file serving (arbitrary JS possible)",
     "cdnjs.cloudflare.com":          "Serves user-specified library versions (arbitrary JS)",
-    "cdn.jsdelivr.net":              "Serves arbitrary npm packages and GitHub content (arbitrary JS)",
+    "cdn.jsdelivr.net":              "Serves arbitrary npm/GitHub packages (arbitrary JS)",
     "unpkg.com":                     "Serves arbitrary npm packages (arbitrary JS)",
-    "rawgit.com":                    "Serves raw GitHub files (arbitrary JS) — now defunct but may still be allowed",
+    "rawgit.com":                    "Raw GitHub file hosting (arbitrary JS) — defunct",
     "raw.githubusercontent.com":     "Serves raw GitHub file content (arbitrary JS)",
     "*.github.io":                   "User-controlled GitHub Pages (arbitrary JS)",
     "gist.github.com":               "User-controlled Gist content (arbitrary JS)",
@@ -107,7 +116,7 @@ CDN_BYPASS_DOMAINS = {
     "mc.yandex.ru":                  "JSONP bypass via Yandex Metrica",
     "translate.google.com":          "JSONP bypass",
     "translate.googleapis.com":      "JSONP bypass via translate endpoint",
-    "*.cloudfront.net":              "User-controlled CloudFront distribution (arbitrary JS possible)",
+    "*.cloudfront.net":              "User-controlled CloudFront distribution (arbitrary JS)",
     "*.s3.amazonaws.com":            "User-controlled S3 bucket (arbitrary JS possible)",
     "*.blob.core.windows.net":       "User-controlled Azure Blob Storage (arbitrary JS possible)",
     "*.staticflickr.com":            "User-uploaded Flickr content (arbitrary JS possible)",
@@ -145,6 +154,7 @@ def effective_script_src(directives: dict[str, list[str]]) -> list[str] | None:
 
 
 def effective_style_src(directives: dict[str, list[str]]) -> list[str] | None:
+    """Return style sources, falling back to default-src per CSP rules."""
     return directives.get("style-src") or directives.get("default-src")
 
 
@@ -161,22 +171,27 @@ def effective_worker_src(directives: dict[str, list[str]]) -> list[str] | None:
 
 
 def has_wildcard(values: list[str]) -> bool:
+    """Return True if the wildcard '*' is present in values."""
     return "*" in values
 
 
 def has_unsafe_inline(values: list[str]) -> bool:
+    """Return True if 'unsafe-inline' is present in values."""
     return "'unsafe-inline'" in values
 
 
 def has_unsafe_eval(values: list[str]) -> bool:
+    """Return True if 'unsafe-eval' is present in values."""
     return "'unsafe-eval'" in values
 
 
 def has_nonce(values: list[str]) -> bool:
+    """Return True if at least one nonce source is present in values."""
     return any(v.startswith("'nonce-") for v in values)
 
 
 def has_hash(values: list[str]) -> bool:
+    """Return True if at least one hash source is present in values."""
     return any(
         v.startswith(("'sha256-", "'sha384-", "'sha512-"))
         for v in values
@@ -216,17 +231,21 @@ def host_matches_bypass(host_value: str, bypass_domain: str) -> bool:
 def extract_host_sources(values: list[str]) -> list[str]:
     """Return values that look like host sources (not keywords like 'self')."""
     keyword_prefixes = ("'", "data:", "blob:", "mediastream:", "filesystem:")
+    scheme_only = ("*", "http:", "https:", "ws:", "wss:")
     result = []
     for v in values:
-        if not any(v.startswith(p) for p in keyword_prefixes) and v not in ("*", "http:", "https:", "ws:", "wss:"):
+        if not any(v.startswith(p) for p in keyword_prefixes) and v not in scheme_only:
             result.append(v)
     return result
 
 
 # ── Finding class ─────────────────────────────────────────────────────────────
-class Finding:
-    def __init__(self, severity: str, directive: str, title: str, detail: str,
-                 recommendation: str):
+class Finding:  # pylint: disable=too-few-public-methods
+    """Represents a single CSP security finding with severity and remediation details."""
+
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+            self, severity: str, directive: str, title: str, detail: str,
+            recommendation: str):
         self.severity = severity
         self.directive = directive
         self.title = title
@@ -234,6 +253,7 @@ class Finding:
         self.recommendation = recommendation
 
     def to_dict(self) -> dict:
+        """Serialise this finding to a JSON-compatible dict."""
         return {
             "severity": self.severity,
             "directive": self.directive,
@@ -244,8 +264,12 @@ class Finding:
 
 
 # ── Analysis engine ───────────────────────────────────────────────────────────
-def analyze_csp(directives: dict[str, list[str]], is_report_only: bool,
-                response_headers: dict[str, str] | None = None) -> list["Finding"]:
+def analyze_csp(  # pylint: disable=too-many-branches,too-many-statements,too-many-locals
+    directives: dict[str, list[str]],
+    is_report_only: bool,
+    response_headers: dict[str, str] | None = None,
+) -> list["Finding"]:
+    """Analyse a parsed CSP directive dict and return a list of Findings."""
     findings: list[Finding] = []
     response_headers = response_headers or {}
 
@@ -521,7 +545,13 @@ def analyze_csp(directives: dict[str, list[str]], is_report_only: bool,
 
     # connect-src wildcard or unrestricted
     eff_connect = effective_connect_src(directives)
-    if eff_connect is None or "*" in eff_connect or "https:" in eff_connect or "http:" in eff_connect:
+    connect_open = (
+        eff_connect is None
+        or "*" in eff_connect
+        or "https:" in eff_connect
+        or "http:" in eff_connect
+    )
+    if connect_open:
         if "connect-src" not in directives or "*" in (directives.get("connect-src") or []):
             add("MEDIUM", "connect-src",
                 "connect-src not restricted — XHR/fetch/WebSocket allowed to any origin",
@@ -769,8 +799,9 @@ def analyze_csp(directives: dict[str, list[str]], is_report_only: bool,
     # trusted-types policy names
     if "trusted-types" in directives:
         tt_vals = directives.get("trusted-types", [])
+        policy_names = ", ".join(tt_vals) or "(none)"
         add("INFO", "trusted-types",
-            f"trusted-types directive present — allowed policy names: {', '.join(tt_vals) or '(none)'}",
+            f"trusted-types directive present — allowed policy names: {policy_names}",
             "The trusted-types directive restricts which Trusted Type policy names "
             "can be created via trustedTypes.createPolicy(). This prevents attackers "
             "from creating arbitrary sanitization policies to bypass require-trusted-types-for.",
@@ -805,22 +836,21 @@ def calculate_risk_score(findings: list[Finding]) -> tuple[int, str, str, str]:
         return (score, "Strong", "strong",
                 "The CSP is well-configured with minimal security risks. "
                 "Continue monitoring for regressions as the application evolves.")
-    elif score >= 65:
+    if score >= 65:
         return (score, "Moderate", "moderate",
                 "The CSP has some issues that should be addressed to improve protection. "
                 "Resolve the flagged findings to harden the policy.")
-    elif score >= 45:
+    if score >= 45:
         return (score, "Weak", "weak",
                 "The CSP has significant weaknesses that substantially reduce its "
                 "effectiveness against XSS and related attacks.")
-    elif score >= 25:
+    if score >= 25:
         return (score, "Poor", "poor",
                 "The CSP has critical misconfigurations that leave the application "
                 "largely unprotected. Immediate remediation is recommended.")
-    else:
-        return (score, "Critical Risk", "critical",
-                "The CSP is severely misconfigured or missing, providing no meaningful "
-                "security protection. Treat this as an urgent security issue.")
+    return (score, "Critical Risk", "critical",
+            "The CSP is severely misconfigured or missing, providing no meaningful "
+            "security protection. Treat this as an urgent security issue.")
 
 
 # ── HTML report helpers ────────────────────────────────────────────────────────
@@ -1130,9 +1160,11 @@ def _directive_status(directive: str, values: list[str],
     return '<span class="st-badge st-ok">✓ OK</span>'
 
 
-def _build_directive_table(directives: dict[str, list[str]],
-                           findings: list[Finding]) -> str:
-    COVERAGE = {
+def _build_directive_table(  # pylint: disable=too-many-locals
+    directives: dict[str, list[str]],
+    findings: list[Finding],
+) -> str:
+    coverage_map = {
         "default-src":   "Fallback for all fetch directives",
         "script-src":    "JavaScript sources",
         "script-src-elem": "Inline &lt;script&gt; elements",
@@ -1165,7 +1197,7 @@ def _build_directive_table(directives: dict[str, list[str]],
     }
 
     # Important directives to show even when missing
-    KEY_DIRECTIVES = [
+    key_directives = [
         "default-src", "script-src", "style-src", "img-src", "connect-src",
         "font-src", "object-src", "worker-src", "base-uri", "form-action",
         "frame-ancestors",
@@ -1173,7 +1205,7 @@ def _build_directive_table(directives: dict[str, list[str]],
 
     all_dirs = list(directives.keys())
     # Show key missing directives + all present directives (deduplicated, ordered)
-    shown = list(dict.fromkeys(KEY_DIRECTIVES + all_dirs))
+    shown = list(dict.fromkeys(key_directives + all_dirs))
 
     rows = []
     for d in shown:
@@ -1187,8 +1219,8 @@ def _build_directive_table(directives: dict[str, list[str]],
             colored = _colorize_csp_value(" ".join(values)) if values else \
                       '<span class="kw-self">\'none\'</span>'
             val_cell = f'<td class="dir-values">{colored}</td>'
-        coverage = COVERAGE.get(d, "")
-        cov_cell = f'<td class="dir-coverage">{coverage}</td>'
+        cov_desc = coverage_map.get(d, "")
+        cov_cell = f'<td class="dir-coverage">{cov_desc}</td>'
         status = _directive_status(d, values, findings)
         st_cell = f'<td>{status}</td>'
         rows.append(f"<tr{cls}>{name_cell}{val_cell}{cov_cell}{st_cell}</tr>")
@@ -1250,7 +1282,7 @@ def _build_findings_html(findings: list[Finding]) -> str:
 
 def _build_recommendations_html(findings: list[Finding]) -> str:
     """Deduplicated top recommendations from HIGH+ findings, plus baseline tips."""
-    TOP_RECS = [
+    top_recs = [
         ("Adopt a strict nonce- or hash-based CSP",
          "Replace host allowlists with 'script-src \\'nonce-{RANDOM}\\' \\'strict-dynamic\\'; "
          "object-src \\'none\\'; base-uri \\'none\\';' — this pattern is resistant to most "
@@ -1280,8 +1312,8 @@ def _build_recommendations_html(findings: list[Finding]) -> str:
 
     # Only include recommendations that are relevant to actual findings
     sev_set = {f.severity for f in findings}
-    relevant_recs = TOP_RECS if any(s in sev_set for s in ("CRITICAL", "HIGH", "MEDIUM")) \
-        else TOP_RECS[3:]  # only reporting/operational recs for clean policies
+    relevant_recs = top_recs if any(s in sev_set for s in ("CRITICAL", "HIGH", "MEDIUM")) \
+        else top_recs[3:]  # only reporting/operational recs for clean policies
 
     parts = ['<div class="rec-list">']
     for i, (title, body) in enumerate(relevant_recs, 1):
@@ -1298,7 +1330,7 @@ def _build_recommendations_html(findings: list[Finding]) -> str:
     return "\n".join(parts)
 
 
-def generate_html_report(
+def generate_html_report(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     findings: list[Finding],
     url: str,
     raw_csp: str | None,
@@ -1307,6 +1339,7 @@ def generate_html_report(
     directives: dict[str, list[str]],
     response_headers: dict[str, str],
 ) -> str:
+    # pylint: disable=too-many-locals,unused-argument
     """Build and return a self-contained HTML report string."""
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     parsed = urlparse(url)
@@ -1416,13 +1449,17 @@ def generate_html_report(
         csp_display = ";\n".join(blocks) + ";"
         csp_content = f'<div class="csp-box-value">{csp_display}</div>'
     else:
-        csp_content = '<div class="csp-absent">&#x2717; No Content-Security-Policy header detected.</div>'
+        csp_content = (
+            '<div class="csp-absent">'
+            "&#x2717; No Content-Security-Policy header detected.</div>"
+        )
 
+    csp_mode_sfx = " (Report-Only)" if is_report_only else ""
     csp_section = f"""
 <section>
   <h2 class="section-title"><span class="section-icon">&#x1F4DC;</span> CSP Header</h2>
   <div class="csp-box">
-    <div class="csp-box-bar">Content-Security-Policy{' (Report-Only)' if is_report_only else ''}</div>
+    <div class="csp-box-bar">Content-Security-Policy{csp_mode_sfx}</div>
     {csp_content}
   </div>
 </section>"""
@@ -1452,17 +1489,25 @@ def generate_html_report(
 </section>"""
 
     # ── footer ────────────────────────────────────────────────────────────────
+    _mdn = "https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CSP"
+    _csp = "https://content-security-policy.com/"
+    _owasp = (
+        "https://cheatsheetseries.owasp.org/cheatsheets/"
+        "Content_Security_Policy_Cheat_Sheet.html"
+    )
+    _eval = "https://csp-evaluator.withgoogle.com/"
     footer_html = f"""
 <footer class="site-footer">
   <div class="container">
     <p>Generated by <strong>CSP Scanner v{_h(VERSION)}</strong> on {_h(ts)}</p>
     <p>
-      <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CSP" target="_blank" rel="noopener">MDN CSP Guide</a> &middot;
-      <a href="https://content-security-policy.com/" target="_blank" rel="noopener">CSP Reference</a> &middot;
-      <a href="https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html" target="_blank" rel="noopener">OWASP Cheat Sheet</a> &middot;
-      <a href="https://csp-evaluator.withgoogle.com/" target="_blank" rel="noopener">Google CSP Evaluator</a>
+      <a href="{_mdn}" target="_blank" rel="noopener">MDN CSP Guide</a> &middot;
+      <a href="{_csp}" target="_blank" rel="noopener">CSP Reference</a> &middot;
+      <a href="{_owasp}" target="_blank" rel="noopener">OWASP Cheat Sheet</a> &middot;
+      <a href="{_eval}" target="_blank" rel="noopener">Google CSP Evaluator</a>
     </p>
-    <p class="disclaimer">Authorized testing only &mdash; do not use against systems without explicit permission.</p>
+    <p class="disclaimer">Authorized testing only &mdash; do not use against
+    systems without explicit permission.</p>
   </div>
 </footer>"""
 
@@ -1512,7 +1557,7 @@ def fetch_headers(url: str) -> tuple[dict[str, str], int]:
         # Still capture headers from error responses
         headers = dict(e.headers)
         return {k.lower(): v for k, v in headers.items()}, e.code
-    except Exception:
+    except OSError:
         # Fall back to GET if HEAD fails
         req2 = Request(url, headers=req.headers)
         try:
@@ -1526,6 +1571,7 @@ def fetch_headers(url: str) -> tuple[dict[str, str], int]:
 
 # ── Output helpers ────────────────────────────────────────────────────────────
 def severity_icon(sev: str) -> str:
+    """Return a short ASCII icon string for the given severity level."""
     return {
         "CRITICAL": "✖✖",
         "HIGH":     "✖ ",
@@ -1536,6 +1582,7 @@ def severity_icon(sev: str) -> str:
 
 
 def print_banner():
+    """Print the CSP Scanner banner to stdout."""
     print(f"""
 {CO.C}{CO.BOLD}╔══════════════════════════════════════════════════════════╗
 ║          Content Security Policy (CSP) Scanner           ║
@@ -1545,6 +1592,7 @@ def print_banner():
 
 
 def print_finding(f: Finding, index: int, total: int):
+    """Print a single finding to stdout with color coding and wrapped text."""
     col = SCOLORS.get(f.severity, "")
     icon = severity_icon(f.severity)
     print(f"  {col}{icon} [{f.severity}]{CO.NC} {CO.W}{f.title}{CO.NC}")
@@ -1558,6 +1606,7 @@ def print_finding(f: Finding, index: int, total: int):
 
 
 def severity_counts(findings: list[Finding]) -> dict[str, int]:
+    """Return a dict mapping each severity level to its finding count."""
     counts = {s: 0 for s in SEVERITY_ORDER}
     for f in findings:
         counts[f.severity] = counts.get(f.severity, 0) + 1
@@ -1566,6 +1615,7 @@ def severity_counts(findings: list[Finding]) -> dict[str, int]:
 
 def print_summary(findings: list[Finding], url: str, raw_csp: str | None,
                   is_report_only: bool, status: int):
+    """Print a color-coded findings summary table to stdout."""
     counts = severity_counts(findings)
     score, risk_label, _, _ = calculate_risk_score(findings)
     print(f"\n{CO.BOLD}{'═' * 62}{CO.NC}")
@@ -1573,7 +1623,10 @@ def print_summary(findings: list[Finding], url: str, raw_csp: str | None,
     print(f"{'═' * 62}")
     print(f"  Target       : {CO.C}{url}{CO.NC}")
     print(f"  HTTP Status  : {status}")
-    mode = f"{CO.Y}Report-Only (not enforced){CO.NC}" if is_report_only else f"{CO.G}Enforcing{CO.NC}"
+    if is_report_only:
+        mode = f"{CO.Y}Report-Only (not enforced){CO.NC}"
+    else:
+        mode = f"{CO.G}Enforcing{CO.NC}"
     print(f"  CSP Mode     : {mode}")
     if raw_csp:
         wrapped = textwrap.fill(raw_csp, width=56, subsequent_indent="               ")
@@ -1585,8 +1638,8 @@ def print_summary(findings: list[Finding], url: str, raw_csp: str | None,
     for sev in SEVERITY_ORDER:
         count = counts[sev]
         col = SCOLORS.get(sev, "")
-        bar = "█" * count if count else CO.D + "none" + CO.NC
-        print(f"  {col}{sev:<10}{CO.NC}  {col}{bar}{CO.NC} {count}")
+        sev_bar = "█" * count if count else CO.D + "none" + CO.NC
+        print(f"  {col}{sev:<10}{CO.NC}  {col}{sev_bar}{CO.NC} {count}")
     print(f"{'═' * 62}")
     total = len(findings)
     print(f"  {CO.BOLD}Total findings: {total}{CO.NC}")
@@ -1594,10 +1647,17 @@ def print_summary(findings: list[Finding], url: str, raw_csp: str | None,
 
 
 # ── Report saving ─────────────────────────────────────────────────────────────
-def save_report(findings: list[Finding], url: str, raw_csp: str | None,
-                is_report_only: bool, status: int, out_dir: str,
-                directives: dict[str, list[str]],
-                response_headers: dict[str, str]) -> tuple[str, str, str]:
+def save_report(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    findings: list[Finding],
+    url: str,
+    raw_csp: str | None,
+    is_report_only: bool,
+    status: int,
+    out_dir: str,
+    directives: dict[str, list[str]],
+    response_headers: dict[str, str],
+) -> tuple[str, str, str]:
+    """Write HTML, JSON, and plain-text reports to out_dir; return their paths."""
     os.makedirs(out_dir, exist_ok=True)
     ts = datetime.now(timezone.utc).isoformat()
 
@@ -1611,7 +1671,7 @@ def save_report(findings: list[Finding], url: str, raw_csp: str | None,
 
     # ── JSON ──────────────────────────────────────────────────────────────────
     json_path = os.path.join(out_dir, "findings.json")
-    score, risk_label, risk_class, _ = calculate_risk_score(findings)
+    score, risk_label, _, _ = calculate_risk_score(findings)
     report = {
         "tool": "CSP Scanner",
         "version": VERSION,
@@ -1648,14 +1708,21 @@ def save_report(findings: list[Finding], url: str, raw_csp: str | None,
         for i, f in enumerate(findings, 1):
             fh.write(f"[{i}] [{f.severity}] {f.title}\n")
             fh.write(f"    Directive      : {f.directive}\n")
-            fh.write(f"    Detail         : {textwrap.fill(f.detail, width=70, subsequent_indent=' ' * 21)}\n")
-            fh.write(f"    Recommendation : {textwrap.fill(f.recommendation, width=70, subsequent_indent=' ' * 21)}\n\n")
+            detail_txt = textwrap.fill(
+                f.detail, width=70, subsequent_indent=" " * 21
+            )
+            rec_txt = textwrap.fill(
+                f.recommendation, width=70, subsequent_indent=" " * 21
+            )
+            fh.write(f"    Detail         : {detail_txt}\n")
+            fh.write(f"    Recommendation : {rec_txt}\n\n")
 
     return html_path, json_path, txt_path
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-def main():
+def main():  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+    """Parse CLI arguments, fetch headers, analyse CSP, and output reports."""
     parser = argparse.ArgumentParser(
         prog="csp-scanner",
         description="Content Security Policy (CSP) scanner — fetch, parse, and audit a CSP header.",
@@ -1670,7 +1737,7 @@ def main():
     parser.add_argument("-u", "--url", required=True,
                         help="Target URL (must start with http:// or https://)")
     parser.add_argument("-o", "--output", default="",
-                        help="Directory to save the report (default: auto-generated under results/)")
+                        help="Output directory (default: auto-generated under results/)")
     parser.add_argument("--no-save", action="store_true",
                         help="Print findings to stdout only, do not save to disk")
     parser.add_argument("--min-severity", default="INFO",
