@@ -1,0 +1,10 @@
+.history/*
+.vscode/*
+results/*
+results/
+__pycache__/
+sourcemap_export/
+.history/
+.env
+API Endpoint Scan/
+*.key
